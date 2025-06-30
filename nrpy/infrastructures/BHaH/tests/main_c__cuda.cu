@@ -5,12 +5,12 @@
  * -={ main() function }=-
  * Step 1.a: Initialize each CodeParameter in the commondata struct to its default value.
  * Step 1.b: Overwrite the default values with those from the parameter file.
- * Then overwrite the parameter file values with those provided via command line arguments.
+ *           Then overwrite the parameter file values with those provided via command line arguments.
  * Step 1.c: Allocate memory for MAXNUMGRIDS griddata structs,
- * where each structure contains data specific to an individual grid.
+ *           where each structure contains data specific to an individual grid.
  * Step 1.d: Initialize each CodeParameter in griddata.params to its default value.
  * Step 1.e: Set up numerical grids, including parameters such as NUMGRIDS, xx[3], masks, Nxx, dxx, invdxx,
- * bcstruct, rfm_precompute, timestep, and others.
+ *           bcstruct, rfm_precompute, timestep, and others.
  * Step 2: Allocate storage for the initial data (y_n_gfs gridfunctions) on each grid.
  * Step 3: Set  initial data.
  * Step 4: Allocate storage for non-y_n gridfunctions needed for the Runge-Kutta-like time-stepping.
@@ -59,6 +59,7 @@ int main(int argc, const char *argv[]) {
   for (int grid = 0; grid < commondata.NUMGRIDS; grid++) {
     // Step 2.b: Allocate host storage for diagnostics
     CUDA__malloc_host_gfs(&commondata, &griddata_device[grid].params, &griddata_host[grid].gridfuncs);
+    CUDA__malloc_host_aux_gfs(&commondata, &griddata_device[grid].params, &griddata_host[grid].gridfuncs);
     CUDA__malloc_host_diagnostic_gfs(&commondata, &griddata_device[grid].params, &griddata_host[grid].gridfuncs);
   }
 

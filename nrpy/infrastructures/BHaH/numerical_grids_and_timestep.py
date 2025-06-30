@@ -80,7 +80,7 @@ def register_CFunction_numerical_grid_params_Nxx_dxx_xx(
 Inputs:
 - Nx[] inputs: Specifies new grid dimensions, if needed.
 - params.convergence_factor (set to 1.0 by default): Factor by which grid resolution is increased; set to 1.0 by default.
-- set_xxmin_xxmax_to_defaults: Whether to set xxmin[3], xxmax[3] to default values set in reference_metric.py.
+- apply_convergence_factor_and_set_xxminmax_defaults: Whether to apply convergence factor, and set xxmin[3], xxmax[3] to default values set in reference_metric.py.
 
 Parameter outputs:
 - Nxx: Number of grid points in each direction.
@@ -94,7 +94,7 @@ Grid setup output:
     parallelization = par.parval_from_str("parallelization")
     cfunc_type = "void"
     name = "numerical_grid_params_Nxx_dxx_xx"
-    params = "const commondata_struct *restrict commondata, params_struct *restrict params, REAL *restrict xx[3], const int Nx[3], const bool set_xxmin_xxmax_to_defaults".replace(
+    params = "const commondata_struct *restrict commondata, params_struct *restrict params, REAL *restrict xx[3], const int Nx[3], const bool apply_convergence_factor_and_set_xxminmax_defaults".replace(
         "REAL *restrict xx[3]",
         "REAL * xx[3]" if parallelization in ["cuda"] else "REAL *restrict xx[3]",
     )
@@ -111,7 +111,7 @@ if( Nx[0]!=-1 && Nx[1]!=-1 && Nx[2]!=-1 ) {
 snprintf(params->CoordSystemName, 100, "{CoordSystem}");
 
 // Resize grid by convergence_factor; used for convergence testing.
-{{
+if (apply_convergence_factor_and_set_xxminmax_defaults) {{
   // convergence_factor does not increase resolution across an axis of symmetry (Nxx == 2):
   if(params->Nxx0 != 2) params->Nxx0 *= commondata->convergence_factor;
   if(params->Nxx1 != 2) params->Nxx1 *= commondata->convergence_factor;
@@ -145,7 +145,7 @@ params->Nxx_plus_2NGHOSTS2 = params->Nxx2 + 2*NGHOSTS;
         body += "}\n"
 
     # Set minimum and maximum values of xx[][] for each grid.
-    body += """if (set_xxmin_xxmax_to_defaults) {
+    body += """if (apply_convergence_factor_and_set_xxminmax_defaults) {
 #include "../set_CodeParameters.h"
 // Set {xxmin[], xxmax[]} to default values, which could be functions of other rfm params (set in set_CodeParameters.h above):
 """
@@ -507,6 +507,7 @@ def register_CFunction_numerical_grids_and_timestep(
     enable_rfm_precompute: bool = False,
     enable_CurviBCs: bool = False,
     enable_set_cfl_timestep: bool = True,
+    enable_masks: bool = False,
 ) -> None:
     """
     Register a C function to set up all numerical grids and timestep.
@@ -521,8 +522,9 @@ def register_CFunction_numerical_grids_and_timestep(
     :param enable_rfm_precompute: Whether to enable reference metric precomputation (default: False).
     :param enable_CurviBCs: Whether to enable curvilinear boundary conditions (default: False).
     :param enable_set_cfl_timestep: Whether to enable computation of dt, the CFL timestep. A custom version can be implemented later.
+    :param enable_masks: If True, make bcstruct algorithm mask-aware.
 
-    :raises ValueError: If invalid gridding_approach selected.
+    :raises ValueError: If invalid gridding_approach selected, or enable_masks with CUDA.
 
     Doctests:
     >>> from nrpy.helpers.generic import validate_strings
@@ -567,10 +569,10 @@ def register_CFunction_numerical_grids_and_timestep(
     int Nx[3] = { -1, -1, -1 };
 
     // Step 1.c: For each grid, set Nxx & Nxx_plus_2NGHOSTS, as well as dxx, invdxx, & xx based on grid_physical_size
-    const bool set_xxmin_xxmax_to_defaults = true;
+    const bool apply_convergence_factor_and_set_xxminmax_defaults = true;
     int grid=0;
 """
-        for which_CoordSystem, CoordSystem in enumerate(set_of_CoordSystems):
+        for which_CoordSystem, CoordSystem in enumerate(sorted(set_of_CoordSystems)):
             body += f"""// In multipatch, gridname is a helpful alias indicating position of the patch. E.g., "lower {CoordSystem} patch"
     snprintf(griddata[grid].params.gridname, 100, "grid_{CoordSystem}");
 """
@@ -578,7 +580,7 @@ def register_CFunction_numerical_grids_and_timestep(
                 f"  griddata[grid].params.CoordSystem_hash = {CoordSystem.upper()};\n"
             )
             body += f"  griddata[grid].params.grid_physical_size = {list_of_grid_physical_sizes[which_CoordSystem]};\n"
-            body += "  numerical_grid_params_Nxx_dxx_xx(commondata, &griddata[grid].params, griddata[grid].xx, Nx, set_xxmin_xxmax_to_defaults);\n"
+            body += "  numerical_grid_params_Nxx_dxx_xx(commondata, &griddata[grid].params, griddata[grid].xx, Nx, apply_convergence_factor_and_set_xxminmax_defaults);\n"
             body += (
                 "  memcpy(&griddata_host[grid].params, &griddata[grid].params, sizeof(params_struct));\n"
                 if parallelization in ["cuda"]
@@ -637,24 +639,25 @@ def register_CFunction_numerical_grids_and_timestep(
 """
     body += "\n// Step 1.e: Set up curvilinear boundary condition struct (bcstruct)\n"
     if enable_CurviBCs:
+        body += "for(int grid=0; grid<commondata->NUMGRIDS; grid++) {\n"
+        mask_arg = ""
+        if enable_masks:
+            mask_arg = "griddata[grid].mask,"
+            if parallelization == "cuda":
+                raise ValueError("CUDA parallelization does not yet support masking.")
         body += (
-            r"""for(int grid=0; grid<commondata->NUMGRIDS; grid++) {
-  bcstruct_set_up(commondata, &griddata[grid].params, griddata_host[grid].xx, &griddata_host[grid].bcstruct, &griddata[grid].bcstruct);
-}
-"""
-            if parallelization in ["cuda"]
-            else r"""for(int grid=0; grid<commondata->NUMGRIDS; grid++) {
-  bcstruct_set_up(commondata, &griddata[grid].params, griddata[grid].xx, &griddata[grid].bcstruct);
-}
-"""
+            f"bcstruct_set_up(commondata, &griddata[grid].params, {mask_arg} griddata[grid].xx, &griddata[grid].bcstruct);\n"
+            if parallelization != "cuda"
+            else "bcstruct_set_up(commondata, &griddata[grid].params, griddata_host[grid].xx, &griddata_host[grid].bcstruct, &griddata[grid].bcstruct);\n"
         )
+        body += "}\n"
     else:
         body += "// (curvilinear boundary conditions bcstruct disabled)\n"
     if enable_set_cfl_timestep:
         sync_params = (
-            "cpyHosttoDevice_params__constant(&griddata[grid].params, griddata[grid].params.grid_idx % NUM_STREAMS);"
-            if parallelization in ["cuda"]
-            else ""
+            ""
+            if parallelization != "cuda"
+            else "cpyHosttoDevice_params__constant(&griddata[grid].params, griddata[grid].params.grid_idx % NUM_STREAMS);"
         )
         body += rf"""
 // Step 1.f: Set timestep based on minimum spacing between neighboring gridpoints.
@@ -677,6 +680,7 @@ for(int grid=0;grid<commondata->NUMGRIDS;grid++) {
    griddata[grid].params.grid_idx = grid;
 }
 """
+
     cfc.register_CFunction(
         includes=includes,
         desc=desc,
@@ -696,6 +700,7 @@ def register_CFunctions(
     enable_rfm_precompute: bool = False,
     enable_CurviBCs: bool = False,
     enable_set_cfl_timestep: bool = True,
+    enable_masks: bool = False,
 ) -> Union[None, pcg.NRPyEnv_type]:
     """
     Register C functions related to coordinate systems and grid parameters.
@@ -707,6 +712,7 @@ def register_CFunctions(
     :param enable_rfm_precompute: Whether to enable reference metric precomputation.
     :param enable_CurviBCs: Whether to enable curvilinear boundary conditions.
     :param enable_set_cfl_timestep: Whether to enable computation of dt, the CFL timestep. A custom version can be implemented later.
+    :param enable_masks: If True, make bcstruct algorithm mask-aware.
 
     :return: None if in registration phase, else the updated NRPy environment.
     """
@@ -729,6 +735,7 @@ def register_CFunctions(
         enable_rfm_precompute=enable_rfm_precompute,
         enable_CurviBCs=enable_CurviBCs,
         enable_set_cfl_timestep=enable_set_cfl_timestep,
+        enable_masks=enable_masks,
     )
 
     if gridding_approach == "multipatch" or enable_set_cfl_timestep:
@@ -739,7 +746,7 @@ def register_CFunctions(
         for CoordSystem in set_of_CoordSystems:
             register_CFunction_ds_min_radial_like_dirns_single_pt(CoordSystem)
 
-    return cast(pcg.NRPyEnv_type, pcg.NRPyEnv())
+    return pcg.NRPyEnv()
 
 
 if __name__ == "__main__":

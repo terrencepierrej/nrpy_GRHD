@@ -1,7 +1,7 @@
 #include "../BHaH_defines.h"
 /**
  * Given Cartesian point (x,y,z), this function unshifts the grid back to the origin to output the corresponding
- * (xx0,xx1,xx2) and the "closest" (i0,i1,i2) for the given grid
+ *             (xx0,xx1,xx2) and the "closest" (i0,i1,i2) for the given grid
  */
 void Cart_to_xx_and_nearest_i0i1i2__rfm__SinhCylindricalv2n2(const params_struct *restrict params, const REAL xCart[3], REAL xx[3],
                                                              int Cart_to_i0i1i2[3]) {
@@ -57,7 +57,8 @@ void Cart_to_xx_and_nearest_i0i1i2__rfm__SinhCylindricalv2n2(const params_struct
       iter++;
     } // END Newton-Raphson iterations to compute xx0
     if (iter >= ITER_MAX) {
-      printf("ERROR: Newton-Raphson failed for SinhCylindricalv2n2: xx0, x,y,z = %.15e %.15e %.15e\n", Cartx, Carty, Cartz);
+      fprintf(stderr, "ERROR: Newton-Raphson failed for SinhCylindricalv2n2: xx0, x,y,z = %.15e %.15e %.15e\n", Cartx, Carty, Cartz);
+      exit(1);
     }
     xx[0] = xx0;
 
@@ -87,7 +88,8 @@ void Cart_to_xx_and_nearest_i0i1i2__rfm__SinhCylindricalv2n2(const params_struct
       iter++;
     } // END Newton-Raphson iterations to compute xx2
     if (iter >= ITER_MAX) {
-      printf("ERROR: Newton-Raphson failed for SinhCylindricalv2n2: xx2, x,y,z = %.15e %.15e %.15e\n", Cartx, Carty, Cartz);
+      fprintf(stderr, "ERROR: Newton-Raphson failed for SinhCylindricalv2n2: xx2, x,y,z = %.15e %.15e %.15e\n", Cartx, Carty, Cartz);
+      exit(1);
     }
     xx[2] = xx2;
 
